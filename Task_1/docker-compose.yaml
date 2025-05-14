@@ -1,0 +1,68 @@
+version: '3.8'
+
+services: 
+  # Database 1
+  postgres_db1:
+    image: postgres:15
+    environment:
+      POSTGRES_USER: user1
+      POSTGRES_PASSWORD: pass1
+      POSTGRES_DB: db1
+    volumes:
+      - pg_db1_data:/var/lib/postgresql/data
+    ports:
+      - "5433:5432"
+
+  # Database 2
+  postgres_db2:
+    image: postgres:15
+    environment:
+      POSTGRES_USER: user2
+      POSTGRES_PASSWORD: pass2
+      POSTGRES_DB: db2
+    volumes:
+      - pg_db2_data:/var/lib/postgresql/data
+    ports:
+      - "5434:5432"
+
+  # Airflow metadata DB
+  postgres_airflow:
+    image: postgres:15
+    environment:
+      POSTGRES_USER: airflow
+      POSTGRES_PASSWORD: airflow
+      POSTGRES_DB: airflow
+    volumes:
+      - pg_airflow_data:/var/lib/postgresql/data
+    ports:
+      - "5432:5432"
+
+  airflow:
+    image: apache/airflow:2.9.3
+    depends_on:
+      - postgres_airflow
+    environment:
+      AIRFLOW__CORE__EXECUTOR: LocalExecutor
+      AIRFLOW__CORE__SQL_ALCHEMY_CONN: postgresql+psycopg2://airflow:airflow@postgres_airflow:5432/airflow
+      AIRFLOW__CORE__FERNET_KEY: ''
+      AIRFLOW__CORE__LOAD_EXAMPLES: 'true'
+      _AIRFLOW_DB_MIGRATE: 'true'
+      _AIRFLOW_WWW_USER_CREATE: 'true'
+      _AIRFLOW_WWW_USER_USERNAME: admin
+      _AIRFLOW_WWW_USER_PASSWORD: admin
+      AIRFLOW_CONN_POSTGRES_1: postgresql://user1:pass1@postgres_db1:5432/db1
+      AIRFLOW_CONN_POSTGRES_2: postgresql://user2:pass2@postgres_db2:5432/db2
+      AIRFLOW_VAR_EXCHANGE_APP_ID: '9093623d6aa445b29e221733f809ea67'
+    ports:
+      - "8080:8080"
+    volumes:
+      - ./dags:/opt/airflow/dags
+      - ./logs:/opt/airflow/logs
+      - ./config:/opt/airflow/config
+      - ./plugins:/opt/airflow/plugins
+    command: airflow standalone
+
+volumes:
+  pg_airflow_data:
+  pg_db1_data:
+  pg_db2_data:
