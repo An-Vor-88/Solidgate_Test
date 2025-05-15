@@ -7,6 +7,7 @@ import logging
 
 log = logging.getLogger(__name__)
 
+# we can retry here as the job is idempodent
 default_args = {
         'owner': 'Andrii',
         'retries': 3,
@@ -24,7 +25,7 @@ default_args = {
 def transfer():
 
     create_table = SQLExecuteQueryOperator(
-        task_id = "create_orders_table_if_not_exists",
+        task_id = "create_orders_eur_table_if_not_exists",
         conn_id = "postgres_2",
         sql = """
             CREATE TABLE IF NOT EXISTS orders_eur (
@@ -50,13 +51,16 @@ def transfer():
         headers = {"accept": "application/json"}
         response = requests.get(url, headers=headers)
 
+        if response.status_code != 200:
+            log.error("Error: {response.status_code} - {response.reason}")
+            raise Exception(response.reason) # didn't create fall back dict for that, so just raising error
+
         try:
             dict = json.loads(response.text)
             return dict["rates"]
         except json.JSONDecodeError as e:
             log.error("Error parsing json:", e)
-        
-        return {}
+            raise e
     
     def convert(args: tuple, rates: dict, to_currency: str = "EUR"):
         _, _, order_date, amount, currency = args
@@ -66,7 +70,7 @@ def transfer():
         else:
             return round(amount / rates[order_date.date()][currency] * rates[order_date.date()][to_currency], 2)
 
-    @task()
+    @task(task_id = "transform_data_and_move_to_orders_eur_table")
     def transform(data_interval_start, data_interval_end):
         src_hook = PostgresHook(postgres_conn_id='postgres_1')
 
@@ -99,8 +103,8 @@ def transfer():
 
         dst_hook = PostgresHook(postgres_conn_id='postgres_2')
         
-        # this approach doesn't handle conflicts, aka UPSERT
-        # but it creates table if not exist, so create_table task is not needed
+        # this approach doesn't handle conflicts, aka UPSERT, so we can't do retries
+        # but it creates table if not exists, so create_table task is not needed
         # df.to_sql('orders_eur', dst_hook.get_sqlalchemy_engine(), index=False, if_exists='append', method='multi')
         
         # this one implements ON CONFLICT, so retries won't crash on duplication indexes.

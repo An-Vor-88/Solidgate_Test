@@ -48,12 +48,17 @@ def generate():
         import requests, json
 
         log.info("Get currencies list")
+
+        dict = []
         
         app_id = Variable.get("exchange_app_id")
         url = f"https://openexchangerates.org/api/currencies.json?app_id={app_id}"
         headers = {"accept": "application/json"}
         response = requests.get(url, headers=headers)
         
+        if response.status_code != 200:
+            log.error("Error: {response.status_code} - {response.reason}")
+
         try:
             dict = json.loads(response.text)            
             # VEF was deprecated in 2018 in favor of VES but for some reason is present in list.
@@ -64,7 +69,7 @@ def generate():
         except json.JSONDecodeError as e:
             log.error("Error parsing json:", e)
         
-        return []
+        return dict
 
 
     def generate_records(num: int, data_interval_end: datetime):
@@ -72,16 +77,21 @@ def generate():
         
         # from faker import Faker
         # fake = Faker()
+        # decided to use standart tools instead
 
+        currency_list = get_currencies() or CURRENCIES # fall back to stored list
+        # this should actually be the other way around - CURRENCIES or get_currencies()
+        # but CURRENCIES would be some cache with invalidation of 1 month or even less
+        # since currencies don't change a lot, the idea is to limit unnecessary requests
+        
         records = []
         for _ in range(num):
             order_id = str(uuid.uuid4())
-            
             email_name = ''.join(random.choices(string.ascii_lowercase, k = random.randint(3, 10)))
             email = email_name + "@test.com"
             order_date = data_interval_end - timedelta(days = random.randint(0, 6), hours = random.randint(0, 23), minutes = random.randint(0, 59))
             amount = round(random.uniform(1, 10000), 2)
-            currency = random.choice(CURRENCIES) # get_currencies() or CURRENCIES
+            currency = random.choice(currency_list)
             ingestion_date = data_interval_end
 
             records.append((order_id, email, order_date, amount, currency, ingestion_date))
@@ -90,13 +100,13 @@ def generate():
         
         return records
 
-    @task()
+    @task(task_id = "generate_data_and_polulate_orders_table")
     def populate(params: dict, data_interval_end: datetime):
         log.info("Get postgres hook")
         dst_hook = PostgresHook(postgres_conn_id='postgres_1')
 
         log.info("Generate records")
-        records = generate_records(params["volume"], data_interval_end)
+        records = generate_records(params["volume"], data_interval_end) # added param for manual trigger with custom number of records
 
         dst_hook.insert_rows(
             "orders",
